@@ -10,59 +10,6 @@ installed all the libraries above
 """
 
 
-def sub2ind(array_shape, sub):
-    """ Function to transfer subscripts of neighbor voxels to index """
-
-    if len(array_shape) == 2:
-        if sub[0] >= (array_shape[0]-1):
-            ind2_1 = -1
-        else:
-            ind2_1 = (sub[0] + 1) * array_shape[1] + sub[1]
-        if sub[1] >= (array_shape[1]-1):
-            ind2_2 = -1
-        else:
-            ind2_2 = sub[0] * array_shape[1] + sub[1] + 1
-        if sub[0] == 0:
-            ind2_3 = -1
-        else:
-            ind2_3 = (sub[0] - 1) * array_shape[1] + sub[1]
-        if sub[1] == 0:
-            ind2_4 = -1
-        else:
-            ind2_4 = sub[0] * array_shape[1] + sub[1] - 1
-        tmp2 = np.array([ind2_1, ind2_2, ind2_3, ind2_4])
-        ind = tmp2[np.nonzero(tmp2 != -1)[0]]
-    else:
-        if sub[0] >= (array_shape[0]-1):
-            ind3_1 = -1
-        else:
-            ind3_1 = (sub[0] + 1)*array_shape[1]*array_shape[2] + sub[1]*array_shape[1] + sub[2]
-        if sub[1] >= (array_shape[1]-1):
-            ind3_2 = -1
-        else:
-            ind3_2 = sub[0]*array_shape[1]*array_shape[2] + (sub[1] + 1)*array_shape[1] + sub[2]
-        if sub[2] >= (array_shape[2]-1):
-            ind3_3 = -1
-        else:
-            ind3_3 = sub[0]*array_shape[1]*array_shape[2] + sub[1]*array_shape[1] + sub[2] + 1
-        if sub[0] == 0:
-            ind3_4 = -1
-        else:
-            ind3_4 = (sub[0] - 1)*array_shape[1]*array_shape[2] + sub[1]*array_shape[1] + sub[2]
-        if sub[1] == 0:
-            ind3_5 = -1
-        else:
-            ind3_5 = sub[0]*array_shape[1]*array_shape[2] + (sub[1] - 1)*array_shape[1] + sub[2]
-        if sub[2] == 0:
-            ind3_6 = -1
-        else:
-            ind3_6 = sub[0]*array_shape[1]*array_shape[2] + sub[1]*array_shape[1] + sub[2] - 1
-        tmp3 = np.array([ind3_1, ind3_2, ind3_3, ind3_4, ind3_5, ind3_6])
-        ind = tmp3[np.nonzero(tmp3 != -1)[0]]
-
-    return ind
-
-
 def delta_fun(x1, x2):
     """ Delta function """
 
@@ -76,30 +23,35 @@ def delta_fun(x1, x2):
     return sum(z)
 
 
-def mrf_map(label0, res_y1, mask, coord_mat, mu, inv_s, tau, eta, map_iter):
+def mrf_map(label0, baseline_id, res_y1, dist, coord_mat, x1, betabar0, s2, sigma, tau, eta, map_iter):
     """ MRF-MAP estimation procedure """
 
-    n1, n_v, m = res_y1.shape
+    n1, n_v = res_y1.shape
     n_class = 2
 
-    u1 = np.zeros(shape=(n_v, n_class))
-    u2 = np.zeros(shape=(n_v, n_class))
-
     for ii in range(n1):
-        r_i = np.squeeze(res_y1[ii, :, :])
-        mu_i = mu[ii, :]
+        r_i = res_y1[ii, :]
+        mu_i = np.dot(x1[ii, :].reshape(1, -1), betabar0.reshape(-1, 1))
         label0_i = label0[ii, :]
         for jj in range(map_iter):
+            u1 = np.zeros(shape=(n_v, n_class))
+            u2 = np.zeros(shape=(n_v, n_class))
+            u3 = np.zeros(shape=(n_v, n_class))
             for kk in range(n_v):
-                u1[kk, 0] = 0.5 * np.sum(np.dot(np.reshape(r_i[kk, :], newshape=(1, m)),
-                                                np.squeeze(inv_s[kk, :, :])) ** 2)
-                u1[kk, 1] = 0.5 * np.sum(np.dot(np.reshape(r_i[kk, :] - mu_i, newshape=(1, m)),
-                                                np.squeeze(inv_s[kk, :, :])) ** 2)
-                sub = coord_mat[kk, :]
-                ind = sub2ind(mask.shape, sub)
+                inv_omega = 1/(s2[kk]*(1+np.dot(np.dot(x1[ii, :].reshape(1, -1),
+                                                       np.squeeze(sigma[:, :, kk])), x1[ii, :].reshape(-1, 1))))
+                nu_i = r_i[kk].reshape(-1, 1)-mu_i
+                u1[kk, 0] = 0.5 * r_i[kk]*inv_omega*r_i[kk]
+                u1[kk, 1] = 0.5 * nu_i*inv_omega*nu_i
+                dist_k = dist[kk, :]
+                ind = np.nonzero(dist_k <= 1.5)[0]
                 u2[kk, 0] = delta_fun(0, label0_i[ind])
                 u2[kk, 1] = delta_fun(1, label0_i[ind])
-            u = u1 + u2*tau + u2*eta
+
+                if baseline_id[jj] == 0:
+                    u3[kk, 0] = delta_fun(0, label0[ii-1, ind])
+                    u3[kk, 1] = delta_fun(1, label0[ii-1, ind])
+            u = u1 + u2*tau + u3*eta
             label0_i = np.argmin(u, axis=1)
 
         label0[ii, :] = label0_i
